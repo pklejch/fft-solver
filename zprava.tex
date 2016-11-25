@@ -1,0 +1,189 @@
+\documentclass[12pt]{article}
+\usepackage{epsf,epic,eepic,eepicemu}
+%\documentstyle[epsf,epic,eepic,eepicemu]{article}
+\usepackage[czech]{babel}
+\usepackage[utf8]{inputenc} % LaTeX source encoded as UTF-8
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{subcaption}
+\usepackage{hyperref}
+
+\begin{document}
+%\oddsidemargin=-5mm \evensidemargin=-5mm \marginparwidth=.08in
+%\marginparsep=.01in \marginparpush=5pt \topmargin=-15mm
+%\headheight=12pt \headsep=25pt \footheight=12pt \footskip=30pt
+%\textheight=25cm \textwidth=17cm \columnsep=2mm \columnseprule=1pt
+%\parindent=15pt\parskip=2pt
+
+\begin{center}
+\bf Semestrální projekt MI-PAP 2015/2016:\\[5mm]
+    Paralelní algoritmus pro FFT\\[5mm]
+       Petr Klejch\\
+\today
+\end{center}
+
+\section{Definice problému a popis sekvenčního algoritmu}
+
+%%o cem
+%
+%Definici problému
+%Popis sekvenčního algoritmu a jeho implementace
+\subsection{Obecný popis úlohy}
+\subsubsection{Diskrétní Fourierova transformace}
+Diskrétní Fourierova transformace (DFT) je transformace převádějící vstupní signál na signál vyjádřený pomocí funkcí $\sin$ a $\cos$. Obecně se diskrétní Fourierova transformace vstupního vektoru o velikosti $N$ spočítá jako:
+$$X_{k} = \sum_{n=0}^{N-1} x_n \cdot e^{-2 \pi i  k n / N},$$ což odpovídá složitosti $\mathcal{O}(N^2)$. 
+Byl však ale objeven algoritmus, který spočítá diskrétní Fourierovu transformaci v čase $\mathcal{O}(N\log{N})$ jménem rychlá Fourierova transformace (FFT).
+\subsubsection{Rychlá Fourierova transformace}
+Rychlá Fourierova transformace je algoritmus typu rozděl a panuj, který rekurzivně dělí vstupní vektor na menší částí, na tyto části opět rekurzivně aplikuje algoritmus FFT a poté zkombinuje výsledné části. Nejčastější implementace je varianta, která dělí vstupní vektor na poloviny a tudíž vstupní vektor musí být velikosti $N^2$. 
+
+\subsection{Popis sekvenčního algoritmu}
+Jelikož je dle zadání vstupní vektor o velikosti $N=2^{k_{1}}*3^{k_{2}}$, nemohla být použita pouze nejčastější implementace FFT - radix-2 FFT, která dělí vektor rekurzivně na poloviny.\par
+Bylo využito obecnější varianty Cooley-Tukey algoritmu FFT, který předpo\-kládá vstupní vektor o velikosti $N=Q*P$. Tento algoritmus převede vstupní vektor do matice o rozměrech $Q*P$, aplikuje $Q\times$ algoritmus DFT na vektor o velikosti $P$ (řádky matice), poté vynásobí všechny prvky matice tzv. twiddle faktory ($e^{-2 \pi i  k / N}$), následně se matice transponuje a aplikuje se $P\times$ algoritmus DFT na vektor o velikosti $Q$ (opět řádky matice).\par
+Jelikož víme, že vstupní vektor je velikosti $N=2^{k_{1}}*3^{k_{2}}$, a tedy $Q=2^{k_{1}}$ a $P=3^{k_{2}}$, je možné použít na řádky matice radix-2, resp. radix-3 FFT variantu, která dělí vektor na poloviny, resp. na třetiny.\par
+Sekvenční algoritmus se tedy skládá z těchto kroků:
+\begin{enumerate}
+\item Faktorizace $N$ na čísla $Q$ a $P$, kde $Q=2^{k_{1}}$ a $P=3^{k_{2}}$.
+\item Převedení vstupního vektoru do matice.
+\item Aplikace $Q\times$ algoritmu radix-3 FFT na řádky matice.
+\item Vynásobením všech prvků matice twiddle faktory.
+\item Transpozice matice.
+\item Aplikace $P\times$ algoritmu radix-2 FFT na řádky matice.
+\item Přečtení matice po řádcích, která obsahuje výsledný transformovaný vektor. 
+\end{enumerate} 
+
+\section{Popis paralelního algoritmu a jeho implementace v OpenMP}
+Sekvenční algoritmus byl vhodný pro paralelní zpracování, a tak vyžadoval minimum úprav. Paralelizovány byly zejména cykly, které počítají $Q\times$ (resp. $P\times$) FFT po řádcích. Jelikož se každý řádek zpracovává zvlášť, nebyla nutná žádná synchronizace (krok (3) a (6)). Dále byla paralelizována část, která transponuje matici (krok (5)) a část která násobí každý prvek matice twiddle faktory (krok (4)).
+\subsection{Vektorizace}
+Na architektuře x86 drtivá část cyklů nebyla vektorizována, kvůli datovým závislostem. Dále některé cykly obsahují podmínky nebo volání funkcí, které zabraňují vektorizaci.\par
+Na architektuře Xeon Phi byla situace o něco lepší. Kompilátor byl schopen vektorizovat několik cyklů. Bohužel cykly, které jsou prováděny nejčastěji vektorizovány nebyly, proto zrychlení oproti nevektorizované verzi je v nejlepším případě přibližně 6 \%, jak lze vidět z tabulek \ref{tab:mereni2} a \ref{tab:mereni3}. \par
+Schopnost vektorizace by se dala zlepšit přepsáním kódu, který by byl v souladu s pravidly pro vektorizaci.
+\newpage
+\subsection{Naměřené výsledky a grafy}
+\subsubsection{Architektura x86}
+\begin{table}[h!]
+\centering
+\begin{tabular}{ | c || c | c | c | }
+  \hline
+  & \multicolumn{3}{ |c| }{Velikost instance} \\
+  \hline
+  \hline
+  Počet vláken & N=4 478 976 ($2^{11}*3^{7}$) & N=5 038 848 ($2^{8}*3^{9}$) & N=6 718 464 ($2^{10}*3^{8}$)\\
+   \hline
+   1 & 7,1 & 7,9 & 10,6  \\
+  \hline
+   2 & 3,7 & 4,2  & 5,6 \\
+  \hline
+   4 & 2,0 & 2,1 & 2,9 \\
+  \hline
+   6 & 1,3 & 1,4 & 2  \\
+  \hline
+   8 & 1,0 & 1,2 & 1,6  \\
+  \hline
+   12 & 1,0 & 1,0 & 1,4  \\
+  \hline
+   24 & 0,6 & 0,8 & 0,8  \\
+  \hline
+  
+\end{tabular}
+\caption{Délka běhu úlohy v sekundách v závislosti na velikosti vstupních dat a počtu vláken.}
+\label{tab:mereni}
+\end{table}
+
+\begin{figure}[!h]
+	\centering
+    \includegraphics[width=\textwidth]{figures/graf.eps}
+    \caption{Graf délky běhu úlohy v závislosti na počtu vláken.}
+    \label{fig:graph2}
+\end{figure}
+
+\begin{figure}[!h]
+	\centering
+    \includegraphics[width=\textwidth]{figures/speedup_x86.eps}
+    \caption{Graf zrychlení v závislosti na počtu vláken.}
+    \label{fig:speedup_x86}
+\end{figure}
+\newpage
+
+
+
+\subsubsection{Architektura Xeon Phi}
+
+%bez Vektorizace
+\textbf{Vypnutá vektorizace}
+\begin{table}[!h]
+\centering
+\begin{tabular}{ | c || c | c | c | }
+  \hline
+  & \multicolumn{3}{ |c| }{Velikost instance} \\
+  \hline   
+  \hline
+  Počet vláken & N=4 478 976 ($2^{11}*3^{7}$) & N=5 038 848 ($2^{8}*3^{9}$) & N=6 718 464 ($2^{10}*3^{8}$)\\
+   \hline
+   1 & 25,9 & 31,6 & 41,9  \\
+  \hline
+   61 & 3,4 & 5,7 & 5,3 \\
+  \hline
+   122 & 2,8 & 3,9 & 4 \\
+  \hline
+   244 & 2,1 & 2,4 & 3,4  \\
+  \hline
+  
+\end{tabular}
+\caption{Délka běhu úlohy s vypnutou vektorizací v sekundách v závislosti na velikosti vstupních dat a počtu vláken.}
+\label{tab:mereni2}
+\end{table}
+\begin{figure}[!h]
+	\centering
+    \includegraphics[width=\textwidth]{figures/xeon_novect.eps}
+    \caption{Graf délky běhu úlohy v závislosti na počtu vláken na architektuře Xeon Phi s vypnutou vektorizací.}
+    \label{fig:xeon_novect}
+\end{figure}
+\newpage
+
+
+%Vektorizace
+\textbf{Zapnutá vektorizace}
+\begin{table}[!h]
+\centering
+\begin{tabular}{ | c || c | c | c | }
+  \hline
+  & \multicolumn{3}{ |c| }{Velikost instance} \\
+  \hline
+  \hline
+  Počet vláken & N=4 478 976 ($2^{11}*3^{7}$) & N=5 038 848 ($2^{8}*3^{9}$) & N=6 718 464 ($2^{10}*3^{8}$)\\
+   \hline
+   1 & 24,9 & 30 & 40,3  \\
+  \hline
+   61 & 3,3 & 5,5 & 5 \\
+  \hline
+   122 & 2,6 & 3,7 & 4,3 \\
+  \hline
+   244 & 2,2 & 2,2 & 3,3  \\
+  \hline
+  
+\end{tabular}
+\caption{Délka běhu úlohy se zapnutou vektorizací v sekundách v závislosti na velikosti vstupních dat a počtu vláken.}
+\label{tab:mereni3}
+\end{table}
+
+\begin{figure}[!h]
+	\centering
+    \includegraphics[width=\textwidth]{figures/xeon_vect.eps}
+    \caption{Graf délky běhu úlohy v závislosti na počtu vláken na architektuře Xeon Phi se zapnutou vektorizací}
+    \label{fig:xeon_vect}
+\end{figure}
+
+\begin{figure}[!h]
+	\centering
+    \includegraphics[width=\textwidth]{figures/speedup_xeon.eps}
+    \caption{Graf zrychlení v závislosti na počtu vláken na architektuře Xeon Phi se zapnutou vektorizací.}
+    \label{fig:speedup_xeon}
+\end{figure}
+
+\clearpage
+\subsection{Zhodnocení}
+Na architektuře x86 paralelní algoritmus relativně dobře škáloval a v určitých instancích bylo dosaženo lineárního zrychlení, jak lze vidět na grafu \ref{fig:speedup_x86}. \par
+Bohužel na architektuře Xeon Phi algoritmus škáloval velmi špatně, jak lze vidět na grafu \ref{fig:speedup_xeon}. Bylo to pravděpodobně způsobeno špatnou granularitou úlohy a nevyužitou vektorizací. Jelikož vláknům byla přidělována velká část práce, a jelikož výpočetní vlákna na architektuře Xeon Phi jsou výkonnostně slabší než na architektuře x86, práce nebyla efektivně rozvržena, což vedlo ke špatným časovým výsledkům. 
+\appendix
+
+\end{document}

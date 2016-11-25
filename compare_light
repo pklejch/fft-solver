@@ -1,0 +1,26 @@
+#!/usr/bin/python3
+import sys
+count=0
+with open("PYTHON_FFT.txt") as f1,open("FFT_out.txt") as f2:
+	for x,y in zip(f1,f2):
+		real1,imag1=x.split(",")
+		real2,imag2=y.split(",")
+		real1=real1.replace("(","")
+		real2=real2.replace("(","")
+		imag1=imag1.replace(")","")
+		imag2=imag2.replace(")","")
+		
+		a=int(float(real1))
+		b=int(float(real2))
+
+		c=int(float(imag1))
+		d=int(float(imag2))
+
+		if  a != b  or  c != d:
+			print("Error on line "+str(count))
+			print(str(a)+" vs. "+str(b))
+			print(str(c)+" vs. "+str(d))
+			sys.exit()
+		count=count+1			
+				
+print("Soubory jsou identicke.")

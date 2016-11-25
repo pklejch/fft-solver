@@ -1,0 +1,2 @@
+#!/bin/bash -i
+pr -w $COLUMNS -m -t PYTHON_FFT.txt FFT_out.txt | less

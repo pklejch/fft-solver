@@ -1,0 +1,12 @@
+*
+!*.cpp
+!*.h
+!Makefile
+!*.sh
+!*.py
+!compare
+!compare_light
+!*.tex
+!.gitignore
+!*.pdf
+!*.cu

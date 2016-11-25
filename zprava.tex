@@ -184,6 +184,69 @@ Schopnost vektorizace by se dala zlepšit přepsáním kódu, který by byl v so
 \subsection{Zhodnocení}
 Na architektuře x86 paralelní algoritmus relativně dobře škáloval a v určitých instancích bylo dosaženo lineárního zrychlení, jak lze vidět na grafu \ref{fig:speedup_x86}. \par
 Bohužel na architektuře Xeon Phi algoritmus škáloval velmi špatně, jak lze vidět na grafu \ref{fig:speedup_xeon}. Bylo to pravděpodobně způsobeno špatnou granularitou úlohy a nevyužitou vektorizací. Jelikož vláknům byla přidělována velká část práce, a jelikož výpočetní vlákna na architektuře Xeon Phi jsou výkonnostně slabší než na architektuře x86, práce nebyla efektivně rozvržena, což vedlo ke špatným časovým výsledkům. 
-\appendix
 
+\section{Popis paralelního algoritmu a jeho implementace v CUDA}
+\subsection{Úpravy v algoritmu}
+Původní algoritmus byl částečně upraven. Mezi nejvýraznější změny patřilo změna reprezentace vektoru v paměti. \par 
+V původním algoritmu byla využita standardní třída complex, která reprezentovala komplexní číslo. V původním programu se pracovalo s polem těchto tříd. Jelikož však operace mezi komplexními čísly (sčítání a násobení) jsou přetížené operátory $+$ a $*$, funkce které zajišťují tyto operace nebylo možné volat z kernelu. Program byl proto přepsán a v paměti byl vektor komplexních čísel reprezentován dvěma poli datového typu float. Jedno pole na \textit{i}-tém prvku obsahovalo reálnou složku komplexního čísla, druhé pole na \textit{i}-tém prvku obsahovalo imaginární složku. V průběhu implementace však byla objevena knihovna thrust, která obsahuje implementaci třídy complex, mající operátory, které se dají volat z kernelu (mají identifikátor device). Rozdělení vektoru do dvou polí datového typu float bylo nakonec zanecháno, ale pro samotné operace mezi komplexními čísly bylo využito knihovny thrust.\par
+Dále musela být funkcí cudaDeviceSetLimit navýšena velikost zásobníku i haldy. Jelikož je algoritmus FFT rekurzivní pro větší instance docházelo k přetečení zásobníku. Z důvodu dopředné alokace paměti pomocných bufferů bylo také nutné navýšit velikost haldy.
+\par
+Mezi další úpravy patřila dopředná alokace pomocných bufferů, aby se běh algoritmu nezpomaloval voláním funkcí malloc a free za běhu.
+\subsection{Počet vláken a velikost bloku}
+Jak je napsáno výše, celý algoritmus se po dá rozdělit do čtyř hlavních částí. A tedy právě tyto části se staly kernely.
+\begin{enumerate}
+	\item Běh radix3-FFT po řádcích matice.
+	\item Transpozice matice.
+	\item Přenásobení matice tzv. twiddle faktory.
+	\item Běh radix2-FFT po řádcích matice. 
+\end{enumerate}
+Jelikož je vstupní vektor velikosti $N$ umístěn do matice o velikosti $Q$ a $P$, radix3-FFT je puštěn v $Q$ vláknech, transpozice matice a přenásobení matice je puštěno v $N$ vláknech a radix2-FFT je puštěno v $P$ vláknech. Muselo být tedy vždy vypočteno s kolika bloky o dané velikosti bude kernel spuštěn. Počet bloků se počítal pomocí toho výrazu   $$\lceil počet\_potřebných\_vláken / počet\_vláken\_v\_bloku \rceil.$$
+Tedy např. pro instanci $N=6718464$ a bloku o velikosti 512 vláken bylo pro běh radix3-FFT použito 13 bloků, na běh transpozice a přenásobení 13122 bloků a na radix2-FFT 2 bloky.
+\subsection{Mez na přepnutí DFT algoritmu}
+FFT algoritmus se dle zadání neměl provádět až do pole velikosti 1, ale od nějaké meze se měl přepnout na triviální DFT algoritmus. Při testování velikosti meze však bylo zjištěno, že se zvětšující se mezí se výpočetní čas prodlužuje a pro malou mez byla úspora času zanedbatelná, na hranici chyby měření.\par
+Mez, která dosahovala nejlepších výsledků byla 4 či 8. Úspora času pravdě\-podobně nebyla tak veliká, jelikož algoritmus DFT nelze provádět in-place. Při výpočtu DFT je i pro poslední prvek výstupního vektoru nutná znalost prvního prvku vstupního vektoru. Tedy výstupní vektor musí být v samostatném poli. Po výpočtu se musí výstupní vektor překopírovat na místo vstupního, což byla pravděpodobně příčina zpomalení.
+\newpage
+\subsection{Naměřené výsledky a grafy na architektuře CUDA}
+\begin{table}[!hb]
+\centering
+\begin{tabular}{ | c || c | c | c | }
+  \hline
+  & \multicolumn{3}{ |c| }{Velikost instance} \\
+  \hline   
+  \hline
+  Velikost bloku & N=4 478 976 ($2^{11}*3^{7}$) & N=5 038 848 ($2^{8}*3^{9}$) & N=6 718 464 ($2^{10}*3^{8}$)\\
+   \hline
+   32 & 2,45 & 17,28 & 5,66  \\
+  \hline
+   64 & 2,45 & 17,39 & 5,64 \\
+  \hline
+   128 & 2,48 & 17,39 & 5,6 \\
+  \hline
+   256 & 2,52 & 18,52 & 6  \\
+  \hline
+   512 & 2,68 & 18,42 & 6,26  \\
+  \hline
+   1024 & 2,93 & 18,44 & 6,69  \\
+  \hline
+  
+\end{tabular}
+\caption{Délka běhu úlohy v sekundách v závislosti na velikosti vstupních dat a velikosti bloku.}
+\label{tab:mereni_cuda}
+\end{table}
+\begin{figure}[!hb]
+	\centering
+    \includegraphics[width=\textwidth]{figures/cuda.eps}
+    \caption{Graf délky běhu úlohy v závislosti na velikosti bloku na architektuře CUDA.}
+    \label{fig:cuda}
+\end{figure}
+
+\newpage
+\subsection{Zhodnocení algoritmu na architektuře CUDA}
+Jak je vidět v grafu \ref{fig:cuda} velikost bloku měla na délku běhu algoritmu vliv. Nejlepší výsledky byly dosaženy s velikostí bloku 32. Rozdíl v času mezi velikostí bloku 32 a 1024 v případě největší instance byla jedna sekunda.\par
+Z grafu si lze také všimnou, že instance N=5 038 848 běžela podstatně déle než ostatní. To bylo způsobeno faktem, že matice byla velmi obdélníková ($256*19683$), radix3-FFT byl počítán pouze pomocí 256 vláken a tak nebyla plně využita paralelizace.
+\section{Závěr}
+Úkolem semestrální práce bylo naimplementovat paralelní FFT algoritmus se vstupním vektorem o velikosti $N=2^{k_{1}}*3^{k_{2}}$. Algoritmus se podařilo naimplementovat na všechny zadané architektury - x86, Xeon Phi a CUDA.\par
+Co se týče rychlosti, zvítězila s přehledem architektura x86. To bylo pravděpodobně zapříčeno faktem, že tato architektura má výpočetně nejsilnější vlákna a ta převážila nad paralelizací. Tento algoritmus nebyl efektivně paralelizován, zejména co se týče granularity. V případě obdélníkových matic je tento fakt nejvíce znatelný, kdy některá vlákna mají přiděleno příliš mnoho práce. Na tuto skutečnost nejvíce doplatila architektura CUDA, která obsahuje velmi velké množství výpočetně slabých vláken.\par
+Při srovnání architektur CUDA a Xeon Phi při využití maxima vláken jsou časy běhů pro některé instance srovnatelné. I zde, ale CUDA ztrácí v případě obdélníkové vstupní matice. 
+\appendix
 \end{document}
